@@ -1,5 +1,3 @@
-import type { ObjectId } from "mongodb";
-
 export interface Plant {
 	_id: string;
 	name: string;
@@ -71,30 +69,30 @@ export interface PlantInfo {
 	image: string;
 }
 
+
 export interface PlantPhotoMatch {
-	results: {
-		score: number;
-		species: {
+	score: number;
+	species: {
+		scientificNameWithoutAuthor: string;
+		scientificNameAuthorship: string;
+		genus: {
 			scientificNameWithoutAuthor: string;
 			scientificNameAuthorship: string;
-			genus: {
-				scientificNameWithoutAuthor: string;
-				scientificNameAuthorship: string;
-				scientificName: string;
-			};
-			family: {
-				scientificNameWithoutAuthor: string;
-				scientificNameAuthorship: string;
-				scientificName: string;
-			};
-			commonNames: string[];
 			scientificName: string;
 		};
-		gbif: {
-			id: string;
+		family: {
+			scientificNameWithoutAuthor: string;
+			scientificNameAuthorship: string;
+			scientificName: string;
 		};
-		powo: {
-			id: string;
-		};
-	}[];
+		commonNames: string[];
+		scientificName: string;
+	};
+	gbif: {
+		id: string;
+	};
+	powo: {
+		id: string;
+	};
 }
+

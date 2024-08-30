@@ -4,7 +4,8 @@ import { cors } from "hono/cors";
 import { type Document, ObjectId } from "mongodb";
 import { db } from "../lib/db";
 import { getPlant, searchPlants } from "../lib/perenual";
-import { Plant, type PlantUpdateInput } from "../types";
+import type { PlantUpdateInput } from "../types";
+import { identifyPlant } from "../lib/plantnet";
 
 const app = new Hono().basePath("/api");
 
@@ -196,6 +197,23 @@ app.get("/info/:id", async (c) => {
 		return c.json({ data: plant });
 	} catch (error) {
 		console.error("Error fetching data from Perenual API:", error);
+		return c.json({ message: "Error fetching plant data" }, 500);
+	}
+});
+
+app.post("/identify", async (c) => {
+	const body = await c.req.parseBody();
+	const file = body.file;
+
+	if (!file) {
+		return c.json({ message: "File is required" }, 400);
+	}
+
+	try {
+		const results = await identifyPlant(file);
+		return c.json({ data: results });
+	} catch (error) {
+		console.error("Error fetching data from Plantnet API:", error);
 		return c.json({ message: "Error fetching plant data" }, 500);
 	}
 });
