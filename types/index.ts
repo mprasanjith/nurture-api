@@ -1,3 +1,32 @@
+import type { ObjectId } from "mongodb";
+
+export interface Plant {
+	_id: string;
+	name: string;
+	addedAt: string;
+	userId: string;
+	info?: PlantInfo;
+	reminders: PlantReminder[];
+}
+
+export interface PlantReminder {
+	id: string;
+	type: "water" | "fertilize" | "prune" | "repot";
+	frequency: number; // in days
+	lastCompleted: string; // ISO date string
+	nextDue: string; // ISO date string
+	history: string[];
+}
+
+export type PlantUpdateInput = {
+	name?: string;
+	reminders?: {
+		add?: Pick<PlantReminder, "type" | "frequency">[];
+		remove?: string[];
+		update?: Pick<PlantReminder, "id" | "type" | "frequency">[];
+	};
+};
+
 export interface SearchResult {
 	id: number;
 	commonName: string;

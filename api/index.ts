@@ -1,10 +1,10 @@
 import { clerkMiddleware, getAuth } from "@hono/clerk-auth";
 import { type Context, Hono } from "hono";
 import { cors } from "hono/cors";
-import { ObjectId } from "mongodb";
+import { type Document, ObjectId } from "mongodb";
 import { db } from "../lib/db";
 import { getPlant, searchPlants } from "../lib/perenual";
-import type { SearchResult } from "../types";
+import { Plant, type PlantUpdateInput } from "../types";
 
 const app = new Hono().basePath("/api");
 
@@ -36,38 +36,125 @@ app.get("/plants", async (c) => {
 
 app.post("/plants", async (c) => {
 	const userId = getUserId(c);
-	const plantData = await c.req.json();
-	const newPlant = { ...plantData, userId };
-	const result = await db.collection("plants").insertOne(newPlant);
-	return c.json({ data: { ...newPlant, _id: result.insertedId } }, 201);
+	if (!userId) {
+		return c.json({ message: "You are not logged in." }, 401);
+	}
+
+	const body: { id: number } = await c.req.json();
+	if (!body.id) {
+		return c.json({ message: "Plant ID is required" }, 400);
+	}
+
+	const plantInfo = await getPlant(body.id);
+
+	const newPlant = {
+		_id: new ObjectId(),
+		info: plantInfo,
+		userId,
+		addedAt: new Date().toISOString(),
+		reminders: [],
+		name: plantInfo.commonName,
+	};
+	await db.collection("plants").insertOne(newPlant);
+
+	return c.json({ data: newPlant }, 201);
 });
 
 app.get("/plants/:id", async (c) => {
 	const userId = getUserId(c);
 	const plantId = c.req.param("id");
+
 	const plant = await db
 		.collection("plants")
 		.findOne({ _id: new ObjectId(plantId), userId });
+
 	if (!plant) {
 		return c.json({ message: "Plant not found" }, 404);
 	}
+
 	return c.json({ data: plant });
 });
 
 app.put("/plants/:id", async (c) => {
 	const userId = getUserId(c);
 	const plantId = c.req.param("id");
-	const updateData = await c.req.json();
-	const result = await db
-		.collection("plants")
-		.updateOne({ _id: new ObjectId(plantId), userId }, { $set: updateData });
-	if (result.matchedCount === 0) {
-		return c.json({ message: "Plant not found" }, 404);
+	const updateData: PlantUpdateInput = await c.req.json();
+
+	const updateOperations: Document = {};
+
+	// Update plant name if provided
+	if (updateData.name) {
+		updateOperations.$set = { name: updateData.name };
 	}
-	const updatedPlant = await db
-		.collection("plants")
-		.findOne({ _id: new ObjectId(plantId), userId });
-	return c.json({ data: updatedPlant });
+
+	// Handle reminder operations
+	if (updateData.reminders) {
+		// Add new reminders
+		if (updateData.reminders.add && updateData.reminders.add.length > 0) {
+			const newReminders = updateData.reminders.add.map((reminder) => ({
+				id: new ObjectId().toString(),
+				...reminder,
+				lastCompleted: new Date().toISOString(),
+				nextDue: new Date(
+					Date.now() + reminder.frequency * 24 * 60 * 60 * 1000,
+				).toISOString(),
+				history: [],
+			}));
+			updateOperations.$push = { reminders: { $each: newReminders } };
+		}
+
+		// Remove reminders
+		if (updateData.reminders.remove && updateData.reminders.remove.length > 0) {
+			updateOperations.$pull = {
+				reminders: { id: { $in: updateData.reminders.remove } },
+			};
+		}
+
+		// Update existing reminders
+		if (updateData.reminders.update && updateData.reminders.update.length > 0) {
+			const bulkWriteOperations = updateData.reminders.update.map(
+				(reminder) => ({
+					updateOne: {
+						filter: { _id: new ObjectId(plantId), "reminders.id": reminder.id },
+						update: {
+							$set: {
+								"reminders.$.type": reminder.type,
+								"reminders.$.frequency": reminder.frequency,
+								"reminders.$.nextDue": new Date(
+									Date.now() + reminder.frequency * 24 * 60 * 60 * 1000,
+								).toISOString(),
+							},
+						},
+					},
+				}),
+			);
+
+			try {
+				await db.collection("plants").bulkWrite(bulkWriteOperations);
+			} catch (error) {
+				console.error("Error updating reminders:", error);
+				return c.json({ message: "Error updating reminders" }, 500);
+			}
+		}
+	}
+
+	try {
+		const result = await db
+			.collection("plants")
+			.updateOne({ _id: new ObjectId(plantId), userId }, updateOperations);
+
+		if (result.matchedCount === 0) {
+			return c.json({ message: "Plant not found" }, 404);
+		}
+
+		const updatedPlant = await db
+			.collection("plants")
+			.findOne({ _id: new ObjectId(plantId), userId });
+		return c.json({ data: updatedPlant });
+	} catch (error) {
+		console.error("Error updating plant:", error);
+		return c.json({ message: "Error updating plant" }, 500);
+	}
 });
 
 app.delete("/plants/:id", async (c) => {
