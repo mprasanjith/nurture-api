@@ -3,7 +3,8 @@ import { type Context, Hono } from "hono";
 import { cors } from "hono/cors";
 import { ObjectId } from "mongodb";
 import { db } from "../lib/db";
-import { searchPlants } from "../lib/plantnet";
+import { getPlant, searchPlants } from "../lib/perenual";
+import type { SearchResult } from "../types";
 
 const app = new Hono().basePath("/api");
 
@@ -91,10 +92,23 @@ app.get("/search", async (c) => {
 
 	try {
 		const plantResults = await searchPlants(query);
-
 		return c.json({ data: plantResults });
 	} catch (error) {
 		console.error("Error fetching data from Plantnet API:", error);
+		return c.json({ message: "Error fetching plant data" }, 500);
+	}
+});
+
+app.get("/info/:id", async (c) => {
+	const id = c.req.param("id");
+
+	const plantId = Number.parseInt(id);
+
+	try {
+		const plant = await getPlant(plantId);
+		return c.json({ data: plant });
+	} catch (error) {
+		console.error("Error fetching data from Perenual API:", error);
 		return c.json({ message: "Error fetching plant data" }, 500);
 	}
 });
