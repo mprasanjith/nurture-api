@@ -6,14 +6,6 @@ import { db } from "../lib/db";
 import { getPlant, searchPlants } from "../lib/perenual";
 import type { Plant, SearchResult } from "../types";
 import { identifyPlant } from "../lib/plantnet";
-import { handle } from "@hono/node-server/vercel";
-import type { PageConfig } from "next";
-
-export const config: PageConfig = {
-	api: {
-		bodyParser: false,
-	},
-};
 
 const app = new Hono().basePath("/api");
 
@@ -317,4 +309,4 @@ app.post("/identify", async (c) => {
 	}
 });
 
-export default handle(app);
+export default app;
