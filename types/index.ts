@@ -1,5 +1,7 @@
+import type { ObjectId } from "mongodb";
+
 export interface Plant {
-	_id: string;
+	_id: string | ObjectId;
 	name: string;
 	addedAt: string;
 	userId: string;

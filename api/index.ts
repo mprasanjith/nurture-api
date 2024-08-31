@@ -1,10 +1,10 @@
 import { clerkMiddleware, getAuth } from "@hono/clerk-auth";
 import { type Context, Hono } from "hono";
 import { cors } from "hono/cors";
-import { type Document, ObjectId } from "mongodb";
+import { ObjectId } from "mongodb";
 import { db } from "../lib/db";
 import { getPlant, searchPlants } from "../lib/perenual";
-import type { PlantUpdateInput } from "../types";
+import { Plant, type SearchResult } from "../types";
 import { identifyPlant } from "../lib/plantnet";
 
 const app = new Hono().basePath("/api");
@@ -76,88 +76,6 @@ app.get("/plants/:id", async (c) => {
 	return c.json({ data: plant });
 });
 
-app.put("/plants/:id", async (c) => {
-	const userId = getUserId(c);
-	const plantId = c.req.param("id");
-	const updateData: PlantUpdateInput = await c.req.json();
-
-	const updateOperations: Document = {};
-
-	// Update plant name if provided
-	if (updateData.name) {
-		updateOperations.$set = { name: updateData.name };
-	}
-
-	// Handle reminder operations
-	if (updateData.reminders) {
-		// Add new reminders
-		if (updateData.reminders.add && updateData.reminders.add.length > 0) {
-			const newReminders = updateData.reminders.add.map((reminder) => ({
-				id: new ObjectId().toString(),
-				...reminder,
-				lastCompleted: new Date().toISOString(),
-				nextDue: new Date(
-					Date.now() + reminder.frequency * 24 * 60 * 60 * 1000,
-				).toISOString(),
-				history: [],
-			}));
-			updateOperations.$push = { reminders: { $each: newReminders } };
-		}
-
-		// Remove reminders
-		if (updateData.reminders.remove && updateData.reminders.remove.length > 0) {
-			updateOperations.$pull = {
-				reminders: { id: { $in: updateData.reminders.remove } },
-			};
-		}
-
-		// Update existing reminders
-		if (updateData.reminders.update && updateData.reminders.update.length > 0) {
-			const bulkWriteOperations = updateData.reminders.update.map(
-				(reminder) => ({
-					updateOne: {
-						filter: { _id: new ObjectId(plantId), "reminders.id": reminder.id },
-						update: {
-							$set: {
-								"reminders.$.type": reminder.type,
-								"reminders.$.frequency": reminder.frequency,
-								"reminders.$.nextDue": new Date(
-									Date.now() + reminder.frequency * 24 * 60 * 60 * 1000,
-								).toISOString(),
-							},
-						},
-					},
-				}),
-			);
-
-			try {
-				await db.collection("plants").bulkWrite(bulkWriteOperations);
-			} catch (error) {
-				console.error("Error updating reminders:", error);
-				return c.json({ message: "Error updating reminders" }, 500);
-			}
-		}
-	}
-
-	try {
-		const result = await db
-			.collection("plants")
-			.updateOne({ _id: new ObjectId(plantId), userId }, updateOperations);
-
-		if (result.matchedCount === 0) {
-			return c.json({ message: "Plant not found" }, 404);
-		}
-
-		const updatedPlant = await db
-			.collection("plants")
-			.findOne({ _id: new ObjectId(plantId), userId });
-		return c.json({ data: updatedPlant });
-	} catch (error) {
-		console.error("Error updating plant:", error);
-		return c.json({ message: "Error updating plant" }, 500);
-	}
-});
-
 app.delete("/plants/:id", async (c) => {
 	const userId = getUserId(c);
 	const plantId = c.req.param("id");
@@ -170,13 +88,172 @@ app.delete("/plants/:id", async (c) => {
 	return c.json({ message: "Plant deleted successfully" });
 });
 
+app.post("/plants/:id/reminders", async (c) => {
+	const userId = getUserId(c);
+	const plantId = c.req.param("id");
+	const reminderData = await c.req.json();
+
+	const newReminder = {
+		id: new ObjectId().toString(),
+		...reminderData,
+		lastCompleted: null,
+		nextDue: new Date(
+			Date.now() + reminderData.frequency * 24 * 60 * 60 * 1000,
+		).toISOString(),
+		history: [],
+	};
+
+	try {
+		const result = await db
+			.collection("plants")
+			.updateOne(
+				{ _id: new ObjectId(plantId), userId },
+				{ $push: { reminders: newReminder } },
+			);
+
+		if (result.matchedCount === 0) {
+			return c.json({ message: "Plant not found" }, 404);
+		}
+
+		return c.json({ data: newReminder });
+	} catch (error) {
+		console.error("Error adding reminder:", error);
+		return c.json({ message: "Error adding reminder" }, 500);
+	}
+});
+
+// Update a specific reminder
+app.put("/plants/:id/reminders/:reminderId", async (c) => {
+	const userId = getUserId(c);
+	const plantId = c.req.param("id");
+	const reminderId = c.req.param("reminderId");
+	const updateData = await c.req.json();
+
+	try {
+		const result = await db.collection("plants").updateOne(
+			{ _id: new ObjectId(plantId), userId, "reminders.id": reminderId },
+			{
+				$set: {
+					"reminders.$.type": updateData.type,
+					"reminders.$.frequency": updateData.frequency,
+					"reminders.$.nextDue": new Date(
+						Date.now() + updateData.frequency * 24 * 60 * 60 * 1000,
+					).toISOString(),
+				},
+			},
+		);
+
+		if (result.matchedCount === 0) {
+			return c.json({ message: "Plant or reminder not found" }, 404);
+		}
+
+		const updatedPlant = await db
+			.collection("plants")
+			.findOne(
+				{ _id: new ObjectId(plantId), userId },
+				{ projection: { reminders: { $elemMatch: { id: reminderId } } } },
+			);
+
+		return c.json({ data: updatedPlant?.reminders[0] });
+	} catch (error) {
+		console.error("Error updating reminder:", error);
+		return c.json({ message: "Error updating reminder" }, 500);
+	}
+});
+
+app.delete("/plants/:id/reminders/:reminderId", async (c) => {
+	const userId = getUserId(c);
+	const plantId = c.req.param("id");
+	const reminderId = c.req.param("reminderId");
+
+	try {
+		const result = await db
+			.collection("plants")
+			.updateOne(
+				{ _id: new ObjectId(plantId), userId },
+				{ $pull: { reminders: { id: reminderId } } },
+			);
+
+		if (result.matchedCount === 0) {
+			return c.json({ message: "Plant not found" }, 404);
+		}
+
+		if (result.modifiedCount === 0) {
+			return c.json({ message: "Reminder not found" }, 404);
+		}
+
+		return c.json({ message: "Reminder deleted successfully" });
+	} catch (error) {
+		console.error("Error deleting reminder:", error);
+		return c.json({ message: "Error deleting reminder" }, 500);
+	}
+});
+
+app.post("/plants/:id/reminders/:reminderId/complete", async (c) => {
+	const userId = getUserId(c);
+	const plantId = c.req.param("id");
+	const reminderId = c.req.param("reminderId");
+
+	if (!userId) {
+		return c.json({ message: "You are not logged in." }, 401);
+	}
+
+	const plant = await db
+		.collection<Plant>("plants")
+		.findOne({ _id: new ObjectId(plantId), userId });
+	if (!plant) {
+		return c.json({ message: "Plant not found" }, 404);
+	}
+
+	try {
+		const now = new Date().toISOString();
+		const result = await db.collection("plants").updateOne(
+			{ _id: new ObjectId(plantId), userId, "reminders.id": reminderId },
+			{
+				$set: {
+					"reminders.$.lastCompleted": now,
+					"reminders.$.nextDue": new Date(
+						Date.now() +
+							// @ts-ignore: Assuming frequency is in days
+							(plant.reminders.find((r) => r.id === reminderId)?.frequency ||
+								0) *
+								24 *
+								60 *
+								60 *
+								1000,
+					).toISOString(),
+				},
+				$push: {
+					"reminders.$.history": now,
+				},
+			},
+		);
+
+		console.log({ result });
+
+		if (result.matchedCount === 0) {
+			return c.json({ message: "Plant or reminder not found" }, 404);
+		}
+
+		const updatedPlant = await db
+			.collection("plants")
+			.findOne(
+				{ _id: new ObjectId(plantId), userId },
+				{ projection: { reminders: { $elemMatch: { id: reminderId } } } },
+			);
+
+		return c.json({ data: updatedPlant?.reminders[0] });
+	} catch (error) {
+		console.error("Error completing reminder:", error);
+		return c.json({ message: "Error completing reminder" }, 500);
+	}
+});
+
 app.get("/search", async (c) => {
 	const query = c.req.query("q");
 	if (!query) {
 		return c.json({ message: "Search query is required" }, 400);
 	}
-
-	console.log("Searching for plants:", query);
 
 	try {
 		const plantResults = await searchPlants(query);
@@ -211,7 +288,23 @@ app.post("/identify", async (c) => {
 
 	try {
 		const results = await identifyPlant(file);
-		return c.json({ data: results });
+		if (!results) {
+			return c.json({ message: "No plant found" }, 404);
+		}
+
+		let plant: SearchResult[] = [];
+		plant = await searchPlants(results.species.scientificNameWithoutAuthor);
+
+		if (plant.length === 0) {
+			// Try searching by the first common name if no exact match was found
+			plant = await searchPlants(results.species.commonNames[0]);
+		}
+
+		if (plant.length === 0) {
+			return c.json({ message: "No plant found" }, 404);
+		}
+
+		return c.json({ data: plant[0] });
 	} catch (error) {
 		console.error("Error fetching data from Plantnet API:", error);
 		return c.json({ message: "Error fetching plant data" }, 500);
