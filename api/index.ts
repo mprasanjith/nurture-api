@@ -4,8 +4,16 @@ import { cors } from "hono/cors";
 import { ObjectId } from "mongodb";
 import { db } from "../lib/db";
 import { getPlant, searchPlants } from "../lib/perenual";
-import { Plant, type SearchResult } from "../types";
+import type { Plant, SearchResult } from "../types";
 import { identifyPlant } from "../lib/plantnet";
+import { handle } from "@hono/node-server/vercel";
+import type { PageConfig } from "next";
+
+export const config: PageConfig = {
+	api: {
+		bodyParser: false,
+	},
+};
 
 const app = new Hono().basePath("/api");
 
@@ -229,8 +237,6 @@ app.post("/plants/:id/reminders/:reminderId/complete", async (c) => {
 			},
 		);
 
-		console.log({ result });
-
 		if (result.matchedCount === 0) {
 			return c.json({ message: "Plant or reminder not found" }, 404);
 		}
@@ -311,4 +317,4 @@ app.post("/identify", async (c) => {
 	}
 });
 
-export default app;
+export default handle(app);
